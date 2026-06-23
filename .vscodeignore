@@ -7,3 +7,9 @@ node_modules/**
 .eslintrc.cjs
 tsconfig.json
 **/*.ts
+scripts/**
+dist/**
+out/install.js
+out/install.js.map
+out/install.d.ts
+out/install.d.ts.map

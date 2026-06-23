@@ -3,11 +3,12 @@ import {
     LoopExecutionState,
     TaskRequirements,
     RalphSettings,
+    TaskScope,
     REVIEW_COUNTDOWN_SECONDS,
     IRalphUI
 } from './types';
 import { logError } from './logger';
-import { readPRDAsync, getNextTaskAsync, getTaskStatsAsync, getWorkspaceRoot, appendProgressAsync, ensureProgressFileAsync } from './fileUtils';
+import { readPRDAsync, getNextTaskAsync, getTaskStatsAsync, getWorkspaceRoot, appendProgressAsync, ensureProgressFileAsync, getProgressSnapshotAsync } from './fileUtils';
 import { RalphStatusBar } from './statusBar';
 import { CountdownTimer, InactivityMonitor } from './timerManager';
 import { FileWatcherManager } from './fileWatchers';
@@ -67,6 +68,9 @@ export class LoopOrchestrator {
         const stats = await getTaskStatsAsync();
         if (stats.pending === 0) {
             this.ui.addLog('No pending tasks found. Add tasks to PRD.md first.');
+            this.ui.setIteration(0);
+            this.ui.setTaskInfo('');
+            this.ui.updateStatus('idle', 0, '');
             vscode.window.showInformationMessage('Ralph: No pending tasks found in PRD.md');
             return;
         }
@@ -123,11 +127,25 @@ export class LoopOrchestrator {
 
         this.state = LoopExecutionState.IDLE;
         this.isPaused = false;
+        this.sessionStartTime = 0;
+        this.taskRunner.resetIterations();
+        this.taskRunner.setCurrentTask('');
+        this.ui.setIteration(0);
+        this.ui.setTaskInfo('');
 
-        this.ui.updateStatus('idle', this.taskRunner.getIterationCount(), this.taskRunner.getCurrentTask());
+        this.ui.updateStatus('idle', 0, '');
         this.ui.updateCountdown(0);
 
-        this.ui.updateSessionTiming(0, this.taskRunner.getTaskHistory(), 0);
+        this.ui.updateSessionTiming(0, this.taskRunner.getTaskHistory(), {
+            total: 0,
+            completed: 0,
+            pending: 0,
+            inProgress: 0,
+            blocked: 0,
+            phases: [],
+            completedPhases: 0,
+            totalPhases: 0
+        });
         await this.ui.updateStats();
     }
 
@@ -152,7 +170,7 @@ export class LoopOrchestrator {
         await this.taskRunner.triggerCopilotAgent(task.description);
     }
 
-    async generatePrdFromDescription(taskDescription: string): Promise<void> {
+    async generatePrdFromDescription(taskDescription: string, scope: TaskScope): Promise<void> {
         const root = getWorkspaceRoot();
         if (!root) {
             vscode.window.showErrorMessage('Ralph: No workspace folder open');
@@ -161,7 +179,14 @@ export class LoopOrchestrator {
 
         this.ui.showPrdGenerating();
         this.setupPrdCreationWatcher();
-        await this.taskRunner.triggerPrdGeneration(taskDescription);
+        const method = await this.taskRunner.triggerPrdGeneration(taskDescription, scope);
+
+        if (!method) {
+            this.fileWatchers.prdCreationWatcher.dispose();
+            this.ui.resetPrdGenerating();
+            await this.ui.refresh();
+            this.ui.addLog('PRD generation did not start. Ready to retry.', true);
+        }
     }
 
     async showStatus(stream: vscode.ChatResponseStream): Promise<void> {
@@ -210,6 +235,7 @@ export class LoopOrchestrator {
     private setupPrdCreationWatcher(): void {
         this.fileWatchers.prdCreationWatcher.start(async () => {
             this.ui.addLog('PRD.md created successfully!', true);
+            this.ui.resetPrdGenerating();
             await this.ui.refresh();
             this.fileWatchers.prdCreationWatcher.dispose();
             vscode.window.showInformationMessage('Ralph: PRD.md created! Click Start to begin.');
@@ -226,7 +252,7 @@ export class LoopOrchestrator {
 
         if (stats.pending === 0) {
             this.ui.addLog('🎉 All tasks completed!', true);
-            this.stopLoop();
+            await this.stopLoop();
             vscode.window.showInformationMessage('Ralph: All PRD tasks completed! 🎉');
             return;
         }
@@ -234,12 +260,12 @@ export class LoopOrchestrator {
         const task = await getNextTaskAsync();
         if (!task) {
             this.ui.addLog('No more tasks to process');
-            this.stopLoop();
+            await this.stopLoop();
             return;
         }
 
         if (this.taskRunner.checkIterationLimit()) {
-            this.stopLoop();
+            await this.stopLoop();
             return;
         }
 
@@ -250,7 +276,13 @@ export class LoopOrchestrator {
         this.ui.updateStatus('running', iteration, task.description);
 
         this.ui.addLog(`Task ${iteration}: ${task.description}`);
-        await this.taskRunner.triggerCopilotAgent(task.description);
+        const method = await this.taskRunner.triggerCopilotAgent(task.description);
+
+        if (!method) {
+            this.ui.addLog('Copilot did not start. Ralph reset to idle so you can retry.', true);
+            await this.stopLoop();
+            return;
+        }
 
         this.fileWatchers.prdWatcher.enable();
         this.inactivityMonitor.setWaiting(true);
@@ -317,7 +349,7 @@ export class LoopOrchestrator {
                 await this.startCountdown();
                 break;
             case 'Stop Loop':
-                this.stopLoop();
+                await this.stopLoop();
                 break;
             default:
                 this.inactivityMonitor.start(() => this.handleInactivity());
@@ -338,7 +370,7 @@ export class LoopOrchestrator {
     }
 
     private async updatePanelTiming(): Promise<void> {
-        const stats = await getTaskStatsAsync();
-        this.ui.updateSessionTiming(this.sessionStartTime, this.taskRunner.getTaskHistory(), stats.pending);
+        const progress = await getProgressSnapshotAsync();
+        this.ui.updateSessionTiming(this.sessionStartTime, this.taskRunner.getTaskHistory(), progress);
     }
 }

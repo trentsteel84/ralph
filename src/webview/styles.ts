@@ -21,6 +21,10 @@ export function getStyles(): string {
             overflow-x: hidden;
         }
 
+        .layout-sidebar {
+            min-width: 0;
+        }
+
         /* Animated gradient header */
         .header {
             background: linear-gradient(-45deg, var(--gradient-1), var(--gradient-2), var(--gradient-3), var(--gradient-2));
@@ -66,6 +70,16 @@ export function getStyles(): string {
             display: flex;
             align-items: center;
             justify-content: space-between;
+        }
+
+        .layout-sidebar .header {
+            padding: 16px;
+        }
+
+        .layout-sidebar .header-content {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
         }
 
         .title {
@@ -126,6 +140,16 @@ export function getStyles(): string {
             display: flex;
             align-items: center;
             gap: 12px;
+        }
+
+        .layout-sidebar .title {
+            flex-wrap: wrap;
+        }
+
+        .layout-sidebar .header-right {
+            width: 100%;
+            flex-wrap: wrap;
+            gap: 8px;
         }
 
         .timing-display {
@@ -206,6 +230,8 @@ export function getStyles(): string {
         /* Main content */
         .content { padding: 16px; }
 
+        .layout-sidebar .content { padding: 12px; }
+
         /* Controls */
         .controls {
             display: flex;
@@ -213,6 +239,15 @@ export function getStyles(): string {
             padding: 16px;
             background: var(--vscode-sideBar-background);
             border-bottom: 1px solid var(--vscode-widget-border);
+        }
+
+        .layout-sidebar .controls {
+            flex-wrap: wrap;
+            padding: 12px;
+        }
+
+        .layout-sidebar .controls .spacer {
+            display: none;
         }
 
         button {
@@ -252,6 +287,18 @@ export function getStyles(): string {
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         button.icon-only { padding: 6px; min-width: 28px; }
         .spacer { flex: 1; }
+
+        .layout-sidebar .controls button {
+            flex: 1 1 calc(50% - 4px);
+        }
+
+        .layout-sidebar .controls button.icon-only {
+            flex: 0 0 auto;
+        }
+
+        .layout-sidebar .controls .open-panel-btn {
+            flex-basis: 100%;
+        }
 
         /* Current task */
         .task-section {
@@ -305,6 +352,10 @@ export function getStyles(): string {
             overflow-y: auto;
             font-family: var(--vscode-editor-font-family);
             font-size: 12px;
+        }
+
+        .layout-sidebar .log-content {
+            max-height: 140px;
         }
 
         .log-entry {
@@ -448,6 +499,47 @@ export function getStyles(): string {
 
         .setup-textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
 
+        .setup-scope-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .setup-scope-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+        }
+
+        .setup-scope-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .scope-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--vscode-input-border);
+            background: rgba(255, 255, 255, 0.04);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .scope-option input {
+            margin: 0;
+            accent-color: var(--gradient-2);
+        }
+
+        .setup-scope-hint {
+            font-size: 11px;
+            line-height: 1.4;
+            color: var(--vscode-descriptionForeground);
+        }
+
         .generate-btn {
             padding: 10px 16px;
             font-size: 13px;
@@ -480,6 +572,20 @@ export function getStyles(): string {
             text-transform: uppercase;
             letter-spacing: 0.5px;
             color: var(--vscode-descriptionForeground);
+        }
+
+        .timeline-header-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .timeline-phase-summary {
+            font-size: 10px;
+            letter-spacing: normal;
+            text-transform: none;
+            color: var(--vscode-descriptionForeground);
+            opacity: 0.8;
         }
 
         .timeline-content { padding: 12px; min-height: 60px; }

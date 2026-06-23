@@ -36,6 +36,11 @@ suite('Webview Templates Test Suite', () => {
             assert.ok(Icons.step.includes('svg'));
         });
 
+        test('should have panel icon', () => {
+            assert.ok(Icons.panel);
+            assert.ok(Icons.panel.includes('svg'));
+        });
+
         test('should have refresh icon', () => {
             assert.ok(Icons.refresh);
             assert.ok(Icons.refresh.includes('svg'));
@@ -146,8 +151,8 @@ suite('Webview Templates Test Suite', () => {
             assert.ok(controls.includes('id="btnStart" onclick="send(\'start\')"'));
 
             const startButtonMatch = controls.match(/id="btnStart"[^>]*>/);
-            assert.ok(startButtonMatch);
-            assert.ok(!startButtonMatch[0].includes('disabled'));
+            assert.ok(startButtonMatch !== null);
+            assert.ok(!(startButtonMatch?.[0] ?? '').includes('disabled'));
         });
 
         test('should include step button', () => {
@@ -163,6 +168,12 @@ suite('Webview Templates Test Suite', () => {
         test('should include settings button', () => {
             const controls = getControls(true);
             assert.ok(controls.includes('openSettings()'));
+        });
+
+        test('should include optional open panel button for compact views', () => {
+            const controls = getControls(true, { showOpenPanelButton: true });
+            assert.ok(controls.includes("send('openPanel')"));
+            assert.ok(controls.includes('Open Panel'));
         });
 
         test('should include resume button (hidden by default)', () => {
@@ -195,6 +206,14 @@ suite('Webview Templates Test Suite', () => {
             assert.ok(setup.includes('generate-btn'));
         });
 
+        test('should include task scope selector', () => {
+            const setup = getSetupSection();
+            assert.ok(setup.includes('taskScope'));
+            assert.ok(setup.includes('Small'));
+            assert.ok(setup.includes('Medium'));
+            assert.ok(setup.includes('Large'));
+        });
+
         test('should include placeholder text', () => {
             const setup = getSetupSection();
             assert.ok(setup.includes('placeholder='));
@@ -222,6 +241,11 @@ suite('Webview Templates Test Suite', () => {
             const timeline = getTimelineSection();
             assert.ok(timeline.includes('timelineCount'));
             assert.ok(timeline.includes('0/0'));
+        });
+
+        test('should include timeline phase summary', () => {
+            const timeline = getTimelineSection();
+            assert.ok(timeline.includes('timelinePhaseSummary'));
         });
 
         test('should include empty state', () => {
@@ -342,6 +366,12 @@ suite('Webview Templates Test Suite', () => {
         test('should generate footer HTML', () => {
             const footer = getFooter();
             assert.ok(footer.includes('footer'));
+        });
+
+        test('should include a version badge in the footer', () => {
+            const footer = getFooter();
+            assert.ok(footer.includes('footer-version'));
+            assert.ok(/>v[^<]+</.test(footer));
         });
 
         test('should include cost warning', () => {

@@ -1,4 +1,4 @@
-import { TaskRequirements } from './types';
+import { TaskRequirements, TaskScope, DEFAULT_TASK_SCOPE } from './types';
 import { readPRDAsync, readProgressAsync, getWorkspaceRoot } from './fileUtils';
 import { getConfig } from './config';
 
@@ -28,6 +28,8 @@ interface TemplateVariables {
     requirements: string;
     workspace: string;
 }
+
+type RequestComplexity = 'simple' | 'moderate' | 'complex';
 
 /**
  * Applies custom template by replacing placeholder variables.
@@ -160,11 +162,14 @@ function buildRequirementsSteps(taskDescription: string, requirements: TaskRequi
     return reqSteps;
 }
 
-export function buildPrdGenerationPrompt(taskDescription: string, workspaceRoot: string): string {
+export function buildPrdGenerationPrompt(
+    taskDescription: string,
+    workspaceRoot: string,
+    scope: TaskScope = DEFAULT_TASK_SCOPE
+): string {
     const sanitizedTask = sanitizeTaskDescription(taskDescription);
     const config = getConfig();
 
-    // Check if custom PRD generation template is provided
     if (config.prompt.customPrdGenerationTemplate && config.prompt.customPrdGenerationTemplate.trim()) {
         return applyCustomTemplate(config.prompt.customPrdGenerationTemplate, {
             task: sanitizedTask,
@@ -175,6 +180,10 @@ export function buildPrdGenerationPrompt(taskDescription: string, workspaceRoot:
         });
     }
 
+    const complexity = inferRequestComplexity(sanitizedTask);
+    const planningInstructions = buildPrdPlanningInstructions(scope, complexity);
+    const outputExample = buildPrdTaskStructureExample(scope, complexity);
+
     return `===================================================================
                        CREATE PRD.md FILE
 ===================================================================
@@ -184,11 +193,17 @@ The user wants to build something. Your job is to create a PRD.md file with a st
 ## USER'S REQUEST:
 ${sanitizedTask}
 
+## SELECTED TASK SCOPE:
+${scope}
+
+## REQUEST COMPLEXITY ASSESSMENT:
+${complexity}
+
 ===================================================================
                     REQUIRED OUTPUT FORMAT
 ===================================================================
 
-Create a file called \`PRD.md\` in the workspace root with this EXACT structure:
+Create a file called \`PRD.md\` in the workspace root with this exact top-level structure:
 
 \`\`\`markdown
 # Project Name
@@ -197,10 +212,7 @@ Create a file called \`PRD.md\` in the workspace root with this EXACT structure:
 Brief description of what we're building.
 
 ## Tasks
-- [ ] Task 1: Clear, actionable task description
-- [ ] Task 2: Another specific task
-- [ ] Task 3: Continue breaking down the work
-... (add more tasks as needed)
+${outputExample}
 
 ## Technical Details
 Any relevant technical decisions, stack info, etc.
@@ -211,26 +223,160 @@ Any relevant technical decisions, stack info, etc.
 ═══════════════════════════════════════════════════════════════
 
 1. **Task Format**: Each task MUST use \`- [ ] \` checkbox format (this is how Ralph tracks progress)
-2. **Keep it SHORT**: Generate exactly 5-6 tasks maximum. Each task runs as a separate agent request.
-3. **Logical Order**: Order tasks so they can be completed sequentially
-4. **Comprehensive Tasks**: Each task should accomplish a meaningful chunk of work (not too granular!)
-5. **Clear Actions**: Start each task with a verb (Create, Add, Implement, Configure, etc.)
+2. **Top-level Sections Stay Fixed**: Keep # Project Name, ## Overview, ## Tasks, and ## Technical Details in that order.
+3. **Logical Order**: Order tasks or phases so they can be completed sequentially.
+4. **Comprehensive Tasks**: Each task should accomplish a meaningful chunk of work, not a tiny implementation detail.
+5. **Clear Actions**: Start each task with a verb (Create, Add, Implement, Configure, Integrate, Polish, etc.).
+6. **Match Scope and Complexity**: Use the selected scope together with the request complexity when deciding whether to stay with a flat task list or introduce phases.
 
-## EXAMPLE TASKS (good - notice only 5 tasks!):
-- [ ] Set up project structure with dependencies and configuration
-- [ ] Create the core data models and types
-- [ ] Implement the main application logic and components
-- [ ] Add user interface and styling
-- [ ] Write tests and documentation
+═══════════════════════════════════════════════════════════════
+                    SCOPE-SPECIFIC PLANNING RULES
+═══════════════════════════════════════════════════════════════
 
-## BAD TASKS (too many or too granular):
-- [ ] Create package.json (too small - combine with other setup)
-- [ ] Add button component (too granular - combine UI work)
-- [ ] 20+ tasks (way too many - keep it to 5-6!)
+${planningInstructions}
+
+## GOOD TASKS
+- [ ] Set up project structure, dependencies, and core configuration
+- [ ] Create the primary data models, contracts, and shared types
+- [ ] Implement the main feature flow and supporting services
+- [ ] Add user-facing UI, validation, and error handling
+- [ ] Write tests, documentation, and release-readiness updates
+
+## BAD TASKS
+- [ ] Create package.json (too small, combine with broader setup work)
+- [ ] Add button component (too granular, combine with related UI work)
+- [ ] List every tiny code edit as its own task (too granular)
+- [ ] Use phases for a tiny request that only needs a short checklist (over-structured)
 
 ═══════════════════════════════════════════════════════════════
 
 Workspace: ${workspaceRoot}
 
-Now create the PRD.md file based on the user's request above. Make the tasks specific and actionable.`;
+Now create the PRD.md file based on the user's request above. Make the plan specific, actionable, and appropriately scoped.`;
+}
+
+function inferRequestComplexity(taskDescription: string): RequestComplexity {
+    const normalized = taskDescription.toLowerCase();
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    const signalWords = [
+        'api',
+        'auth',
+        'authentication',
+        'backend',
+        'billing',
+        'cache',
+        'ci',
+        'database',
+        'deploy',
+        'deployment',
+        'frontend',
+        'integration',
+        'migration',
+        'mobile',
+        'permissions',
+        'queue',
+        'realtime',
+        'real-time',
+        'reporting',
+        'search',
+        'server',
+        'sync',
+        'testing',
+        'ui',
+        'webhook',
+        'worker'
+    ];
+    const uniqueSignals = new Set(signalWords.filter(signal => normalized.includes(signal)));
+
+    let score = 0;
+
+    if (wordCount >= 35) {
+        score++;
+    }
+    if (wordCount >= 80) {
+        score++;
+    }
+    if (uniqueSignals.size >= 3) {
+        score++;
+    }
+    if (uniqueSignals.size >= 6) {
+        score++;
+    }
+    if ((normalized.includes('frontend') || normalized.includes('ui'))
+        && (normalized.includes('backend') || normalized.includes('api') || normalized.includes('database'))) {
+        score++;
+    }
+    if ((normalized.match(/\band\b/g) || []).length >= 3) {
+        score++;
+    }
+
+    if (score >= 4) {
+        return 'complex';
+    }
+
+    if (score >= 2) {
+        return 'moderate';
+    }
+
+    return 'simple';
+}
+
+function buildPrdPlanningInstructions(scope: TaskScope, complexity: RequestComplexity): string {
+    switch (scope) {
+        case TaskScope.SMALL:
+            return [
+                '- **Small scope means compact planning**: Keep the plan as a flat checklist and do not introduce phases.',
+                complexity === 'simple'
+                    ? '- **Task count target**: Generate 3-4 tasks.'
+                    : '- **Task count target**: Generate 4-5 tasks while combining related work into broader chunks.',
+                '- **Shape**: Keep a single checklist directly under ## Tasks with no extra headings.',
+                '- **Bias**: Merge related setup, implementation, and verification work instead of splitting into micro-tasks.'
+            ].join('\n');
+        case TaskScope.LARGE:
+            return [
+                '- **Large scope means phase-based planning**: Use explicit phase headings inside ## Tasks.',
+                complexity === 'complex'
+                    ? '- **Phase count target**: Generate 3-5 phases with roughly 2-4 tasks per phase.'
+                    : '- **Phase count target**: Generate 2-4 phases with roughly 2-3 tasks per phase.',
+                '- **Shape**: Use markdown phase headings such as ### Phase 1: Foundation, then list checkbox tasks under each phase.',
+                '- **Bias**: Separate foundation, core implementation, integration, and polish/testing when that improves execution order.'
+            ].join('\n');
+        case TaskScope.MEDIUM:
+        default:
+            return [
+                '- **Medium scope should adapt to complexity**: Stay flat for simpler requests, but introduce light phase structure when the request is clearly multi-part.',
+                complexity === 'simple'
+                    ? '- **Task count target**: Generate 4-6 flat tasks with no phase headings.'
+                    : '- **Task count target**: Generate 5-8 tasks total. If the work spans multiple subsystems, you may group tasks under 2-3 short phase headings.',
+                '- **Shape**: Prefer a flat checklist unless the request includes multiple implementation layers, integrations, or delivery stages.',
+                '- **Bias**: Keep the plan readable and execution-friendly. Do not add phases unless they clarify a genuinely broader request.'
+            ].join('\n');
+    }
+}
+
+function buildPrdTaskStructureExample(scope: TaskScope, complexity: RequestComplexity): string {
+    const usePhases = scope === TaskScope.LARGE || (scope === TaskScope.MEDIUM && complexity !== 'simple');
+
+    if (usePhases) {
+        return [
+            '### Phase 1: Foundation',
+            '- [ ] Set up the project structure, dependencies, and core architecture',
+            '- [ ] Define the main data models, contracts, and shared configuration',
+            '',
+            '### Phase 2: Core Delivery',
+            '- [ ] Implement the primary feature flows and supporting services',
+            '- [ ] Connect the main integrations, validation, and error handling',
+            '',
+            '### Phase 3: Finish and Verify',
+            '- [ ] Add tests, documentation, and release-readiness updates'
+        ].join('\n');
+    }
+
+    return [
+        '- [ ] Set up the project structure, dependencies, and core configuration',
+        '- [ ] Create the primary data models and shared types',
+        '- [ ] Implement the main feature flow and supporting logic',
+        '- [ ] Add the user-facing behavior, validation, and error handling',
+        '- [ ] Write tests, documentation, and final polish'
+    ].join('\n');
 }

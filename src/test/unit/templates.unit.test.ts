@@ -36,6 +36,11 @@ describe('Webview Templates', () => {
             assert.ok(Icons.step.includes('svg'));
         });
 
+        it('should have panel icon', () => {
+            assert.ok(Icons.panel);
+            assert.ok(Icons.panel.includes('svg'));
+        });
+
         it('should have refresh icon', () => {
             assert.ok(Icons.refresh);
             assert.ok(Icons.refresh.includes('svg'));
@@ -146,8 +151,8 @@ describe('Webview Templates', () => {
             assert.ok(controls.includes('id="btnStart" onclick="send(\'start\')"'));
 
             const startButtonMatch = controls.match(/id="btnStart"[^>]*>/);
-            assert.ok(startButtonMatch);
-            assert.ok(!startButtonMatch[0].includes('disabled'));
+            assert.ok(startButtonMatch !== null);
+            assert.ok(!(startButtonMatch?.[0] ?? '').includes('disabled'));
         });
 
         it('should include step button', () => {
@@ -165,6 +170,12 @@ describe('Webview Templates', () => {
             assert.ok(controls.includes('openSettings()'));
         });
 
+        it('should include optional open panel button for compact views', () => {
+            const controls = getControls(true, { showOpenPanelButton: true });
+            assert.ok(controls.includes("send('openPanel')"));
+            assert.ok(controls.includes('Open Panel'));
+        });
+
         it('should include resume button (hidden by default)', () => {
             const controls = getControls(true);
             assert.ok(controls.includes('btnResume'));
@@ -176,6 +187,7 @@ describe('Webview Templates', () => {
         it('should generate setup section HTML', () => {
             const setup = getSetupSection();
             assert.ok(setup.includes('setup-section'));
+            assert.ok(setup.includes('id="setupSection"'));
         });
 
         it('should include rocket icon', () => {
@@ -193,6 +205,14 @@ describe('Webview Templates', () => {
             const setup = getSetupSection();
             assert.ok(setup.includes('generatePrd()'));
             assert.ok(setup.includes('generate-btn'));
+        });
+
+        it('should include task scope selector', () => {
+            const setup = getSetupSection();
+            assert.ok(setup.includes('taskScope'));
+            assert.ok(setup.includes('Small'));
+            assert.ok(setup.includes('Medium'));
+            assert.ok(setup.includes('Large'));
         });
 
         it('should include placeholder text', () => {
@@ -222,6 +242,11 @@ describe('Webview Templates', () => {
             const timeline = getTimelineSection();
             assert.ok(timeline.includes('timelineCount'));
             assert.ok(timeline.includes('0/0'));
+        });
+
+        it('should include timeline phase summary', () => {
+            const timeline = getTimelineSection();
+            assert.ok(timeline.includes('timelinePhaseSummary'));
         });
 
         it('should include empty state', () => {

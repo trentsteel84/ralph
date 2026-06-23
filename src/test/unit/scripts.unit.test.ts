@@ -48,6 +48,12 @@ describe('Webview Scripts', () => {
             assert.ok(scripts.includes('function updateUI(status, iteration, taskInfo)'));
         });
 
+        it('should hide the setup section whenever Ralph is not idle', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes("const setupSection = document.getElementById('setupSection')"));
+            assert.ok(scripts.includes("setupSection.style.display = status === 'idle' ? 'block' : 'none'"));
+        });
+
         it('should include showCountdown function', () => {
             const scripts = getClientScripts();
             assert.ok(scripts.includes('function showCountdown(seconds)'));
@@ -61,6 +67,17 @@ describe('Webview Scripts', () => {
         it('should include generatePrd function', () => {
             const scripts = getClientScripts();
             assert.ok(scripts.includes('function generatePrd()'));
+        });
+
+        it('should read and post the selected task scope during PRD generation', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes('input[name="taskScope"]:checked'));
+            assert.ok(scripts.includes('scope: scope'));
+        });
+
+        it('should include resetGeneratePrdButton function', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes('function resetGeneratePrdButton()'));
         });
 
         it('should include message event listener', () => {
@@ -88,6 +105,11 @@ describe('Webview Scripts', () => {
             assert.ok(scripts.includes("msg.type === 'prdGenerating'"));
         });
 
+        it('should handle PRD reset message type', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes("msg.type === 'prdGenerateReset'"));
+        });
+
         it('should handle history message type', () => {
             const scripts = getClientScripts();
             assert.ok(scripts.includes("msg.type === 'history'"));
@@ -110,12 +132,12 @@ describe('Webview Scripts', () => {
 
         it('should include updatePipeline function', () => {
             const scripts = getClientScripts();
-            assert.ok(scripts.includes('function updatePipeline(completed, pending)'));
+            assert.ok(scripts.includes('function updatePipeline(completed, pending, blocked)'));
         });
 
         it('should include updateTiming function', () => {
             const scripts = getClientScripts();
-            assert.ok(scripts.includes('function updateTiming(startTime, taskHistory, pendingTasks)'));
+            assert.ok(scripts.includes('function updateTiming(startTime, taskHistory, progress)'));
         });
 
         it('should include updateElapsedAndEta function', () => {
@@ -158,6 +180,13 @@ describe('Webview Scripts', () => {
             assert.ok(scripts.includes('function getTaskStats()'));
         });
 
+        it('should include phase-aware timeline summary helpers', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes('function normalizeProgress(progress)'));
+            assert.ok(scripts.includes('function updateTimelineSummary(stats)'));
+            assert.ok(scripts.includes('timelinePhaseSummary'));
+        });
+
         it('should include TOTAL_COUNTDOWN constant', () => {
             const scripts = getClientScripts();
             assert.ok(scripts.includes('TOTAL_COUNTDOWN'));
@@ -184,6 +213,11 @@ describe('Webview Scripts', () => {
         it('should post messages to vscode', () => {
             const scripts = getClientScripts();
             assert.ok(scripts.includes('vscode.postMessage'));
+        });
+
+        it('should notify the extension when the webview is ready', () => {
+            const scripts = getClientScripts();
+            assert.ok(scripts.includes("vscode.postMessage({ command: 'ready' })"));
         });
 
         it('should include optimistic UI updates in send function', () => {

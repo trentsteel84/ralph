@@ -9,6 +9,7 @@ export interface Task {
     status: TaskStatus;
     lineNumber: number;
     rawLine: string;
+    phaseTitle?: string;
 }
 
 export enum TaskStatus {
@@ -47,6 +48,26 @@ export interface TaskCompletion {
     iteration: number;
 }
 
+export interface PhaseProgress {
+    title: string;
+    total: number;
+    completed: number;
+    pending: number;
+    inProgress: number;
+    blocked: number;
+}
+
+export interface ProgressSnapshot {
+    total: number;
+    completed: number;
+    pending: number;
+    inProgress: number;
+    blocked: number;
+    phases: PhaseProgress[];
+    completedPhases: number;
+    totalPhases: number;
+}
+
 export interface TaskRequirements {
     runTests: boolean;
     runLinting: boolean;
@@ -73,6 +94,14 @@ export const DEFAULT_SETTINGS: RalphSettings = {
     maxIterations: 50
 };
 
+export enum TaskScope {
+    SMALL = 'small',
+    MEDIUM = 'medium',
+    LARGE = 'large'
+}
+
+export const DEFAULT_TASK_SCOPE = TaskScope.MEDIUM;
+
 export const REVIEW_COUNTDOWN_SECONDS = 12;
 
 export const INACTIVITY_TIMEOUT_MS = 60_000;
@@ -83,9 +112,10 @@ export interface IRalphUI {
     updateStatus(status: string, iteration: number, currentTask: string, history: TaskCompletion[]): void;
     updateCountdown(seconds: number): void;
     updateHistory(history: TaskCompletion[]): void;
-    updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], pendingTasks: number): void;
+    updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], progress: ProgressSnapshot): void;
     updateStats(): void | Promise<void>;
     refresh(): void | Promise<void>;
     addLog(message: string, highlight?: boolean): void;
     showPrdGenerating(): void;
+    resetPrdGenerating(): void;
 }

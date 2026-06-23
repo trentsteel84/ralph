@@ -20,6 +20,7 @@ export const Icons = {
     pause: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
     stop: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>',
     step: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="15" y="4" width="4" height="16"/></svg>',
+    panel: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>',
     refresh: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
     settings: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
     check: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
@@ -27,7 +28,7 @@ export const Icons = {
     star: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 6px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
 };
 
-export function getLogo(size: number = 24): string {
+export function getLogo(size = 24): string {
     return `<svg class="ralph-logo" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -85,7 +86,14 @@ export function getHeader(): string {
     </div>`;
 }
 
-export function getControls(hasPrd: boolean): string {
+export function getControls(hasPrd: boolean, options: { showOpenPanelButton?: boolean } = {}): string {
+    const openPanelButton = options.showOpenPanelButton
+        ? `
+        <button class="secondary open-panel-btn" onclick="send('openPanel')">
+            ${Icons.panel} Open Panel
+        </button>`
+        : '';
+
     return `
     <div class="controls">
         <button class="primary" id="btnStart" onclick="send('start')" ${!hasPrd ? 'disabled' : ''}>
@@ -104,6 +112,7 @@ export function getControls(hasPrd: boolean): string {
         <button class="secondary" id="btnNext" onclick="send('next')" ${!hasPrd ? 'disabled' : ''}>
             ${Icons.step} Step
         </button>
+        ${openPanelButton}
         <button class="secondary icon-only" onclick="send('refresh')" title="Refresh">
             ${Icons.refresh}
         </button>
@@ -115,7 +124,7 @@ export function getControls(hasPrd: boolean): string {
 
 export function getSetupSection(): string {
     return `
-    <div class="setup-section">
+    <div class="setup-section" id="setupSection">
         <div class="setup-header">
             <span class="setup-icon">${Icons.rocket}</span>
             <span>Get Started with Ralph</span>
@@ -130,6 +139,24 @@ export function getSetupSection(): string {
                 placeholder="Example: Build a todo app with React that has add, delete, and mark complete functionality. Use TypeScript and Tailwind CSS for styling."
                 rows="4"
             ></textarea>
+            <div class="setup-scope-group">
+                <span class="setup-scope-label">Task scope</span>
+                <div class="setup-scope-options" role="radiogroup" aria-label="Task scope selector">
+                    <label class="scope-option">
+                        <input type="radio" name="taskScope" value="small">
+                        <span>Small</span>
+                    </label>
+                    <label class="scope-option">
+                        <input type="radio" name="taskScope" value="medium" checked>
+                        <span>Medium</span>
+                    </label>
+                    <label class="scope-option">
+                        <input type="radio" name="taskScope" value="large">
+                        <span>Large</span>
+                    </label>
+                </div>
+                <div class="setup-scope-hint">Small keeps the plan compact, medium adapts to complexity, and large encourages phase-based breakdowns.</div>
+            </div>
             <button class="primary generate-btn" onclick="generatePrd()">
                 ${Icons.star}Generate PRD & Tasks
             </button>
@@ -141,7 +168,10 @@ export function getTimelineSection(): string {
     return `
     <div class="timeline-section" id="timelineSection">
         <div class="timeline-header">
-            <span>Task Timeline</span>
+            <div class="timeline-header-copy">
+                <span>Task Timeline</span>
+                <span class="timeline-phase-summary" id="timelinePhaseSummary"></span>
+            </div>
             <span id="timelineCount">0/0</span>
         </div>
         <div class="timeline-content">

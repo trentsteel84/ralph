@@ -1,5 +1,5 @@
 import { RalphStatusBar, LoopStatus } from './statusBar';
-import { TaskCompletion, IRalphUI } from './types';
+import { ProgressSnapshot, TaskCompletion, IRalphUI } from './types';
 import { log } from './logger';
 
 export class UIManager {
@@ -44,9 +44,9 @@ export class UIManager {
         this.sidebarView?.updateHistory(history);
     }
 
-    updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], pendingTasks: number): void {
-        this.panel?.updateSessionTiming(startTime, taskHistory, pendingTasks);
-        this.sidebarView?.updateSessionTiming(startTime, taskHistory, pendingTasks);
+    updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], progress: ProgressSnapshot): void {
+        this.panel?.updateSessionTiming(startTime, taskHistory, progress);
+        this.sidebarView?.updateSessionTiming(startTime, taskHistory, progress);
     }
 
     async updateStats(): Promise<void> {
@@ -64,7 +64,12 @@ export class UIManager {
         this.sidebarView?.showPrdGenerating();
     }
 
-    addLog(message: string, highlight: boolean = false): void {
+    resetPrdGenerating(): void {
+        this.panel?.resetPrdGenerating();
+        this.sidebarView?.resetPrdGenerating();
+    }
+
+    addLog(message: string, highlight = false): void {
         log(message);
         this.logs.push(message);
         this.panel?.addLog(message, highlight);

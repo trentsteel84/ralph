@@ -1,14 +1,17 @@
 import * as vscode from 'vscode';
 import { RalphStatusBar } from './statusBar';
-import { RalphPanel, RalphSidebarProvider } from './controlPanel';
+import { RalphPanel, RalphSidebarProvider, PanelEventHandler, PanelEventType } from './controlPanel';
 import { LoopOrchestrator } from './orchestrator';
+import { DEFAULT_TASK_SCOPE } from './types';
 import { log, disposeLogger, showLogs } from './logger';
 
 class RalphExtension {
     private statusBar: RalphStatusBar;
     private orchestrator: LoopOrchestrator;
+    private readonly sidebarProvider: RalphSidebarProvider;
     private currentPanel: RalphPanel | null = null;
     private panelEventHandlers: vscode.Disposable[] = [];
+    private sidebarEventHandlers: vscode.Disposable[] = [];
 
     constructor(private readonly context: vscode.ExtensionContext) {
         log('Ralph extension activating...');
@@ -18,9 +21,12 @@ class RalphExtension {
 
         this.orchestrator = new LoopOrchestrator(this.statusBar);
 
-        const sidebarProvider = new RalphSidebarProvider(context.extensionUri);
+        this.sidebarProvider = new RalphSidebarProvider(context.extensionUri);
+        this.orchestrator.setSidebarView(this.sidebarProvider);
+        this.sidebarEventHandlers = this.registerControlSurfaceHandlers(this.sidebarProvider);
+
         context.subscriptions.push(
-            vscode.window.registerWebviewViewProvider('ralph.sidebarView', sidebarProvider)
+            vscode.window.registerWebviewViewProvider('ralph.sidebarView', this.sidebarProvider)
         );
 
         this.registerCommands();
@@ -59,28 +65,38 @@ class RalphExtension {
             this.cleanupPanel();
         });
 
-        this.panelEventHandlers.push(
-            this.currentPanel.on('start', () => this.orchestrator.startLoop()),
-            this.currentPanel.on('stop', () => this.orchestrator.stopLoop()),
-            this.currentPanel.on('pause', () => this.orchestrator.pauseLoop()),
-            this.currentPanel.on('resume', () => this.orchestrator.resumeLoop()),
-            this.currentPanel.on('next', () => this.orchestrator.runSingleStep()),
-            this.currentPanel.on('generatePrd', (data) => {
+        this.panelEventHandlers = this.registerControlSurfaceHandlers(this.currentPanel);
+    }
+
+    private registerControlSurfaceHandlers(surface: {
+        on(event: PanelEventType, handler: PanelEventHandler): vscode.Disposable;
+    }): vscode.Disposable[] {
+        return [
+            surface.on('openPanel', () => this.showPanel()),
+            surface.on('start', () => this.orchestrator.startLoop()),
+            surface.on('stop', () => this.orchestrator.stopLoop()),
+            surface.on('pause', () => this.orchestrator.pauseLoop()),
+            surface.on('resume', () => this.orchestrator.resumeLoop()),
+            surface.on('next', () => this.orchestrator.runSingleStep()),
+            surface.on('generatePrd', (data) => {
                 if (data?.taskDescription) {
-                    this.orchestrator.generatePrdFromDescription(data.taskDescription);
+                    this.orchestrator.generatePrdFromDescription(
+                        data.taskDescription,
+                        data.scope ?? DEFAULT_TASK_SCOPE
+                    );
                 }
             }),
-            this.currentPanel.on('requirementsChanged', (data) => {
+            surface.on('requirementsChanged', (data) => {
                 if (data?.requirements) {
                     this.orchestrator.setRequirements(data.requirements);
                 }
             }),
-            this.currentPanel.on('settingsChanged', (data) => {
+            surface.on('settingsChanged', (data) => {
                 if (data?.settings) {
                     this.orchestrator.setSettings(data.settings);
                 }
             })
-        );
+        ];
     }
 
     private cleanupPanel(): void {
@@ -92,6 +108,8 @@ class RalphExtension {
 
     dispose(): void {
         this.cleanupPanel();
+        this.sidebarEventHandlers.forEach(d => d.dispose());
+        this.sidebarEventHandlers = [];
         this.orchestrator.dispose();
         disposeLogger();
     }

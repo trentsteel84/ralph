@@ -119,5 +119,11 @@ describe('Webview Styles', () => {
             assert.ok(styles.includes('.controls'));
             assert.ok(styles.includes('.spacer'));
         });
+
+        it('should include compact sidebar layout styles', () => {
+            const styles = getStyles();
+            assert.ok(styles.includes('.layout-sidebar'));
+            assert.ok(styles.includes('.open-panel-btn'));
+        });
     });
 });

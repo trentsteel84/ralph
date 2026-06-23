@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { getTaskStatsAsync, getNextTaskAsync, readPRDAsync } from './fileUtils';
-import { TaskCompletion, TaskRequirements, RalphSettings, IRalphUI } from './types';
+import { getNextTaskAsync, getProgressSnapshotAsync, readPRDAsync } from './fileUtils';
+import { ProgressSnapshot, TaskCompletion, TaskRequirements, RalphSettings, TaskScope, DEFAULT_TASK_SCOPE, IRalphUI } from './types';
 import {
     getStyles,
     getClientScripts,
@@ -12,11 +12,11 @@ import {
     getTaskSection,
     getLogSection,
     getFooter,
-    getSettingsOverlay,
-    getLogo
+    getSettingsOverlay
 } from './webview';
 
 export type PanelEventType =
+    | 'openPanel'
     | 'start'
     | 'stop'
     | 'pause'
@@ -28,37 +28,91 @@ export type PanelEventType =
 
 export interface PanelEventData {
     taskDescription?: string;
+    scope?: TaskScope;
     requirements?: TaskRequirements;
     settings?: RalphSettings;
 }
 
 export type PanelEventHandler = (data?: PanelEventData) => void;
 
-export class RalphPanel implements IRalphUI {
-    private readonly panel: vscode.WebviewPanel;
-    private disposables: vscode.Disposable[] = [];
-    private isDisposed = false;
+interface PanelMessage {
+    command: string;
+    taskDescription?: string;
+    scope?: TaskScope;
+    requirements?: TaskRequirements;
+    settings?: RalphSettings;
+}
 
+interface ProgressMessageState extends ProgressSnapshot {
+    progress: number;
+    nextTask: string | null;
+}
+
+export type RalphWebviewMode = 'panel' | 'sidebar';
+
+export async function generateRalphHtmlAsync(mode: RalphWebviewMode): Promise<string> {
+    const stats = await getProgressSnapshotAsync();
+    const nextTask = await getNextTaskAsync();
+    const prd = await readPRDAsync();
+    const hasPrd = !!prd;
+    const bodyClass = mode === 'sidebar' ? 'layout-sidebar' : 'layout-panel';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ralph</title>
+    <style>${getStyles()}</style>
+</head>
+<body class="${bodyClass}">
+    ${getHeader()}
+    ${getControls(hasPrd, { showOpenPanelButton: mode === 'sidebar' })}
+    <div class="content">
+        ${getSetupSection()}
+        ${getTimelineSection()}
+        ${hasPrd ? getRequirementsSection() : ''}
+        ${getTaskSection(nextTask, stats.total > 0)}
+        ${getLogSection()}
+        ${mode === 'panel' ? getFooter() : ''}
+    </div>
+    ${getSettingsOverlay()}
+    <script>${getClientScripts()}</script>
+</body>
+</html>`;
+}
+
+abstract class RalphWebviewUIBase implements IRalphUI {
+    private lastStatus = 'idle';
+    private lastIteration = 0;
+    private lastTaskInfo = '';
+    private lastCountdown = 0;
+    private lastHistory: TaskCompletion[] = [];
+    private lastTiming = {
+        startTime: 0,
+        taskHistory: [] as TaskCompletion[],
+        progress: {
+            total: 0,
+            completed: 0,
+            pending: 0,
+            inProgress: 0,
+            blocked: 0,
+            phases: [],
+            completedPhases: 0,
+            totalPhases: 0
+        } as ProgressSnapshot
+    };
+    private lastStats: ProgressMessageState | null = null;
+    private logEntries: Array<{ message: string; highlight: boolean }> = [];
+    private isPrdGenerating = false;
     private readonly eventHandlers = new Map<PanelEventType, Set<PanelEventHandler>>();
 
-    private onDisposeCallback?: () => void;
-
-    constructor(panel: vscode.WebviewPanel) {
-        this.panel = panel;
-        this.initializeHtml();
-        this.setupMessageHandler();
-        this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    }
-
-    private async initializeHtml(): Promise<void> {
-        this.panel.webview.html = await RalphPanel.generateHtmlAsync();
-    }
-
-    on(event: PanelEventType, handler: PanelEventHandler): vscode.Disposable {
+    public on(event: PanelEventType, handler: PanelEventHandler): vscode.Disposable {
         if (!this.eventHandlers.has(event)) {
             this.eventHandlers.set(event, new Set());
         }
-        this.eventHandlers.get(event)!.add(handler);
+        const handlers = this.eventHandlers.get(event);
+        handlers?.add(handler);
 
         return {
             dispose: () => {
@@ -67,29 +121,42 @@ export class RalphPanel implements IRalphUI {
         };
     }
 
-    private emit(event: PanelEventType, data?: PanelEventData): void {
+    protected emit(event: PanelEventType, data?: PanelEventData): void {
         this.eventHandlers.get(event)?.forEach(handler => handler(data));
     }
 
-    private setupMessageHandler(): void {
-        this.panel.webview.onDidReceiveMessage(
-            message => this.handleMessage(message),
-            null,
-            this.disposables
-        );
-    }
-
-    private handleMessage(message: { command: string; taskDescription?: string; requirements?: TaskRequirements; settings?: RalphSettings }): void {
+    protected handleMessage(message: PanelMessage): void {
         switch (message.command) {
-            case 'start': this.emit('start'); break;
-            case 'stop': this.emit('stop'); break;
-            case 'pause': this.emit('pause'); break;
-            case 'resume': this.emit('resume'); break;
-            case 'next': this.emit('next'); break;
-            case 'refresh': this.refresh(); break;
+            case 'ready':
+                this.restoreState();
+                break;
+            case 'openPanel':
+                this.emit('openPanel');
+                break;
+            case 'start':
+                this.emit('start');
+                break;
+            case 'stop':
+                this.emit('stop');
+                break;
+            case 'pause':
+                this.emit('pause');
+                break;
+            case 'resume':
+                this.emit('resume');
+                break;
+            case 'next':
+                this.emit('next');
+                break;
+            case 'refresh':
+                void this.refresh();
+                break;
             case 'generatePrd':
                 if (message.taskDescription) {
-                    this.emit('generatePrd', { taskDescription: message.taskDescription });
+                    this.emit('generatePrd', {
+                        taskDescription: message.taskDescription,
+                        scope: message.scope ?? DEFAULT_TASK_SCOPE
+                    });
                 }
                 break;
             case 'requirementsChanged':
@@ -103,6 +170,128 @@ export class RalphPanel implements IRalphUI {
                 }
                 break;
         }
+    }
+
+    public updateStatus(status: string, iteration: number, taskInfo: string, _history: TaskCompletion[]): void {
+        this.lastStatus = status;
+        this.lastIteration = iteration;
+        this.lastTaskInfo = taskInfo;
+        this.postMessage({ type: 'update', status, iteration, taskInfo });
+    }
+
+    public updateCountdown(seconds: number): void {
+        this.lastCountdown = seconds;
+        this.postMessage({ type: 'countdown', seconds });
+    }
+
+    public updateHistory(history: TaskCompletion[]): void {
+        this.lastHistory = [...history];
+        this.postMessage({ type: 'history', history });
+    }
+
+    public updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], progress: ProgressSnapshot): void {
+        this.lastTiming = {
+            startTime,
+            taskHistory: [...taskHistory],
+            progress: { ...progress, phases: [...progress.phases] }
+        };
+        this.postMessage({ type: 'timing', startTime, taskHistory, progress });
+    }
+
+    public async updateStats(): Promise<void> {
+        const stats = await getProgressSnapshotAsync();
+        const nextTask = await getNextTaskAsync();
+        const progress = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
+
+        this.lastStats = {
+            ...stats,
+            completed: stats.completed,
+            pending: stats.pending,
+            total: stats.total,
+            progress,
+            nextTask: nextTask?.description || null
+        };
+
+        this.postMessage({
+            type: 'stats',
+            ...stats,
+            completed: stats.completed,
+            pending: stats.pending,
+            total: stats.total,
+            progress,
+            nextTask: nextTask?.description || null
+        });
+    }
+
+    public addLog(message: string, highlight = false): void {
+        this.logEntries.push({ message, highlight });
+        this.postMessage({ type: 'log', message, highlight });
+    }
+
+    public showPrdGenerating(): void {
+        this.isPrdGenerating = true;
+        this.postMessage({ type: 'prdGenerating' });
+    }
+
+    public resetPrdGenerating(): void {
+        this.isPrdGenerating = false;
+        this.postMessage({ type: 'prdGenerateReset' });
+    }
+
+    protected clearPrdGeneratingState(): void {
+        this.isPrdGenerating = false;
+    }
+
+    protected restoreState(): void {
+        this.postMessage({
+            type: 'update',
+            status: this.lastStatus,
+            iteration: this.lastIteration,
+            taskInfo: this.lastTaskInfo
+        });
+
+        if (this.lastCountdown > 0) {
+            this.postMessage({ type: 'countdown', seconds: this.lastCountdown });
+        }
+
+        this.postMessage({ type: 'history', history: this.lastHistory });
+        this.postMessage({
+            type: 'timing',
+            startTime: this.lastTiming.startTime,
+            taskHistory: this.lastTiming.taskHistory,
+            progress: this.lastTiming.progress
+        });
+
+        if (this.lastStats) {
+            this.postMessage({ type: 'stats', ...this.lastStats });
+        }
+
+        for (const entry of this.logEntries) {
+            this.postMessage({ type: 'log', message: entry.message, highlight: entry.highlight });
+        }
+
+        if (this.isPrdGenerating) {
+            this.postMessage({ type: 'prdGenerating' });
+        }
+    }
+
+    protected abstract postMessage(message: unknown): void;
+
+    public abstract refresh(): void | Promise<void>;
+}
+
+export class RalphPanel extends RalphWebviewUIBase {
+    private readonly panel: vscode.WebviewPanel;
+    private disposables: vscode.Disposable[] = [];
+    private isDisposed = false;
+    private onDisposeCallback?: () => void;
+
+    constructor(panel: vscode.WebviewPanel) {
+        super();
+        this.panel = panel;
+        void this.initializeHtml();
+        this.setupMessageHandler();
+        this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     }
 
     public static createPanel(extensionUri: vscode.Uri): vscode.WebviewPanel {
@@ -124,233 +313,102 @@ export class RalphPanel implements IRalphUI {
     }
 
     public async refresh(): Promise<void> {
-        this.panel.webview.html = await RalphPanel.generateHtmlAsync();
+        this.clearPrdGeneratingState();
+        this.panel.webview.html = await generateRalphHtmlAsync('panel');
     }
 
-    public updateStatus(status: string, iteration: number, taskInfo: string, _history: TaskCompletion[]): void {
-        this.panel.webview.postMessage({ type: 'update', status, iteration, taskInfo });
+    private async initializeHtml(): Promise<void> {
+        this.panel.webview.html = await generateRalphHtmlAsync('panel');
     }
 
-    public updateCountdown(seconds: number): void {
-        this.panel.webview.postMessage({ type: 'countdown', seconds });
+    private setupMessageHandler(): void {
+        this.panel.webview.onDidReceiveMessage(
+            (message: PanelMessage) => this.handleMessage(message),
+            null,
+            this.disposables
+        );
     }
 
-    public updateHistory(history: TaskCompletion[]): void {
-        this.panel.webview.postMessage({ type: 'history', history });
-    }
+    protected postMessage(message: unknown): void {
+        if (this.isDisposed) {
+            return;
+        }
 
-    public updateSessionTiming(startTime: number, taskHistory: TaskCompletion[], pendingTasks: number): void {
-        this.panel.webview.postMessage({ type: 'timing', startTime, taskHistory, pendingTasks });
-    }
-
-    public async updateStats(): Promise<void> {
-        const stats = await getTaskStatsAsync();
-        const nextTask = await getNextTaskAsync();
-        const progress = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
-
-        this.panel.webview.postMessage({
-            type: 'stats',
-            completed: stats.completed,
-            pending: stats.pending,
-            total: stats.total,
-            progress,
-            nextTask: nextTask?.description || null
-        });
-    }
-
-    public static async generateHtmlAsync(): Promise<string> {
-        const stats = await getTaskStatsAsync();
-        const nextTask = await getNextTaskAsync();
-        const prd = await readPRDAsync();
-        const hasPrd = !!prd;
-
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ralph</title>
-    <style>${getStyles()}</style>
-</head>
-<body>
-    ${getHeader()}
-    ${getControls(hasPrd)}
-    <div class="content">
-        ${!hasPrd ? getSetupSection() : ''}
-        ${getTimelineSection()}
-        ${hasPrd ? getRequirementsSection() : ''}
-        ${getTaskSection(nextTask, stats.total > 0)}
-        ${getLogSection()}
-        ${getFooter()}
-    </div>
-    ${getSettingsOverlay()}
-    <script>${getClientScripts()}</script>
-</body>
-</html>`;
-    }
-
-    public addLog(message: string, highlight: boolean = false): void {
-        this.panel.webview.postMessage({ type: 'log', message, highlight });
-    }
-
-    public showPrdGenerating(): void {
-        this.panel.webview.postMessage({ type: 'prdGenerating' });
+        void this.panel.webview.postMessage(message);
     }
 
     private dispose(): void {
-        if (this.isDisposed) { return; }
+        if (this.isDisposed) {
+            return;
+        }
+
         this.isDisposed = true;
-
         this.onDisposeCallback?.();
-
-        this.eventHandlers.clear();
-
         this.panel.dispose();
-        this.disposables.forEach(d => d.dispose());
+        this.disposables.forEach(disposable => disposable.dispose());
         this.disposables = [];
     }
 }
 
-export class RalphSidebarProvider implements vscode.WebviewViewProvider, IRalphUI {
-    private _view?: vscode.WebviewView;
+export class RalphSidebarProvider extends RalphWebviewUIBase implements vscode.WebviewViewProvider {
+    private view?: vscode.WebviewView;
 
     constructor(
-        private readonly _extensionUri: vscode.Uri
-    ) { }
+        private readonly extensionUri: vscode.Uri
+    ) {
+        super();
+    }
 
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ): void {
-        this._view = webviewView;
+        this.view = webviewView;
 
         webviewView.webview.options = {
             enableScripts: true,
-            localResourceRoots: [this._extensionUri]
+            localResourceRoots: [this.extensionUri]
         };
 
-        webviewView.webview.html = this.getHtml();
+        void this.render();
 
-        webviewView.webview.onDidReceiveMessage(message => {
-            if (message.command === 'openPanel') {
-                vscode.commands.executeCommand('ralph.showPanel');
-            }
+        webviewView.webview.onDidReceiveMessage((message: PanelMessage) => {
+            this.handleMessage(message);
         });
     }
 
-    private getHtml(): string {
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ralph</title>
-    <style>
-        body {
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            color: var(--vscode-foreground);
-            background: var(--vscode-editor-background);
-            padding: 16px;
-            margin: 0;
+    public async refresh(): Promise<void> {
+        this.clearPrdGeneratingState();
+
+        if (!this.isViewAvailable()) {
+            return;
         }
-        .container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            gap: 16px;
+
+        try {
+            await this.render();
+        } catch {
+            // Ignore errors when refreshing webview
         }
-        .logo { margin-bottom: 8px; }
-        h2 { margin: 0; font-size: 16px; font-weight: 600; }
-        p {
-            margin: 0;
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-            line-height: 1.5;
+    }
+
+    protected postMessage(message: unknown): void {
+        if (!this.view) {
+            return;
         }
-        .open-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
-            background: linear-gradient(135deg, #7c3aed, #2563eb);
-            color: white;
-            transition: opacity 0.15s, transform 0.15s;
-        }
-        .open-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-        .open-btn:active { transform: translateY(0); }
-    </style>
-</head>
-<body>
-    <div class="container">
-        ${getLogo(48)}
-        <h2>Ralph</h2>
-        <p>Autonomous PRD Development<br/>with GitHub Copilot</p>
-        <button class="open-btn" onclick="openPanel()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                <line x1="9" y1="3" x2="9" y2="21"/>
-            </svg>
-            Open Control Panel
-        </button>
-    </div>
-    <script>
-        const vscode = acquireVsCodeApi();
-        function openPanel() { vscode.postMessage({ command: 'openPanel' }); }
-    </script>
-</body>
-</html>`;
+
+        void this.view.webview.postMessage(message);
     }
 
     private isViewAvailable(): boolean {
-        return !!(this._view && this._view.webview);
+        return !!this.view;
     }
 
-    public updateStatus(_status: string, _iteration: number, _currentTask: string, _history: TaskCompletion[]): void {
-
-    }
-
-    public updateCountdown(_seconds: number): void {
-
-    }
-
-    public updateHistory(_history: TaskCompletion[]): void {
-
-    }
-
-    public updateSessionTiming(_startTime: number, _taskHistory: TaskCompletion[], _pendingTasks: number): void {
-
-    }
-
-    public updateStats(): void {
-
-    }
-
-    public refresh(): void {
-
-        if (this.isViewAvailable()) {
-            try {
-                this._view!.webview.html = this.getHtml();
-            } catch {
-                // Ignore errors when refreshing webview
-            }
+    private async render(): Promise<void> {
+        if (!this.view) {
+            return;
         }
-    }
 
-    public addLog(_message: string, _highlight: boolean = false): void {
-
-    }
-
-    public showPrdGenerating(): void {
-
+        this.view.webview.html = await generateRalphHtmlAsync('sidebar');
     }
 }

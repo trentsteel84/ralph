@@ -82,6 +82,16 @@ For more information on available Copilot settings and autonomy levels, see the 
 - VS Code 1.93 or later
 - GitHub Copilot Chat extension
 
+## Local VS Code Insiders Install
+
+Run the local package-and-install workflow with:
+
+```bash
+npm run install:insiders
+```
+
+That command first checks whether the local devDependencies are available. When they are installed, it recompiles the extension, creates a versioned `.vsix` in `dist/`, installs it into VS Code Insiders, and prints a reminder to reload any open Insiders windows so the new build is active. If the repo has not been bootstrapped yet but `out/` already contains a compiled build, it now reuses that build instead of failing in `tsc`; otherwise it stops immediately with a single `npm ci` instruction instead of emitting a long list of missing-type errors.
+
 ## License
 
 MIT

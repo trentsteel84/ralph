@@ -23,20 +23,87 @@ function loadMetadata(): FixtureMetadata[] {
     return JSON.parse(fs.readFileSync(path.join(fixturesDir, 'fixtures-metadata.json'), 'utf-8'));
 }
 
+interface PhaseProgress {
+    title: string;
+    total: number;
+    completed: number;
+    pending: number;
+    inProgress: number;
+    blocked: number;
+}
+
+interface ProgressSnapshot {
+    total: number;
+    completed: number;
+    pending: number;
+    inProgress: number;
+    blocked: number;
+    phases: PhaseProgress[];
+    completedPhases: number;
+    totalPhases: number;
+}
+
 // Since fileUtils imports vscode modules, we test the pure parsing logic
 // by re-implementing the parseTasksFromContent function here for unit testing purposes.
 // This approach is consistent with other unit tests in this project (see promptBuilder.unit.test.ts)
 // and allows us to test the regex logic without requiring the full VS Code environment.
 // The actual integration testing happens in the VS Code test environment.
 
+const TASK_PATTERN = /^\s*[-*]\s*\[([ x~!])\]\s*(.+)$/i;
+const HEADING_PATTERN = /^(#{1,6})\s+(.+?)\s*$/;
+
+function normalizeHeadingTitle(title: string): string {
+    return title.trim().replace(/[\s:.-]+$/, '');
+}
+
+function isPhaseHeading(title: string, inTasksSection: boolean, level: number, tasksHeadingLevel: number | null): boolean {
+    if (/^phase\b/i.test(title)) {
+        return true;
+    }
+
+    return inTasksSection && tasksHeadingLevel !== null && level > tasksHeadingLevel;
+}
+
 function parseTasksFromContent(content: string): Task[] {
     const tasks: Task[] = [];
     // Normalize line endings: handle CRLF (Windows), LF (Unix), and CR (old Mac)
     const lines = content.split(/\r?\n|\r/);
+    let inTasksSection = false;
+    let tasksHeadingLevel: number | null = null;
+    let currentPhaseTitle: string | undefined;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        const match = /^[-*]\s*\[([ x~!])\]\s*(.+)$/im.exec(line);
+        const trimmedLine = line.trim();
+        const headingMatch = HEADING_PATTERN.exec(trimmedLine);
+
+        if (headingMatch) {
+            const level = headingMatch[1].length;
+            const headingTitle = normalizeHeadingTitle(headingMatch[2]);
+
+            if (/^tasks$/i.test(headingTitle)) {
+                inTasksSection = true;
+                tasksHeadingLevel = level;
+                currentPhaseTitle = undefined;
+                continue;
+            }
+
+            if (inTasksSection && tasksHeadingLevel !== null && level <= tasksHeadingLevel) {
+                inTasksSection = false;
+                tasksHeadingLevel = null;
+                currentPhaseTitle = undefined;
+            }
+
+            if (isPhaseHeading(headingTitle, inTasksSection, level, tasksHeadingLevel)) {
+                currentPhaseTitle = headingTitle;
+            } else if (!inTasksSection) {
+                currentPhaseTitle = undefined;
+            }
+
+            continue;
+        }
+
+        const match = TASK_PATTERN.exec(line);
 
         if (match) {
             const marker = match[1].toLowerCase();
@@ -62,12 +129,86 @@ function parseTasksFromContent(content: string): Task[] {
                 description,
                 status,
                 lineNumber: i + 1,
-                rawLine: line
+                rawLine: line,
+                phaseTitle: currentPhaseTitle
             });
         }
     }
 
     return tasks;
+}
+
+function buildProgressSnapshot(tasks: Task[]): ProgressSnapshot {
+    const phases = new Map<string, PhaseProgress>();
+    const snapshot: ProgressSnapshot = {
+        total: tasks.length,
+        completed: 0,
+        pending: 0,
+        inProgress: 0,
+        blocked: 0,
+        phases: [],
+        completedPhases: 0,
+        totalPhases: 0
+    };
+
+    tasks.forEach(task => {
+        switch (task.status) {
+            case TaskStatus.COMPLETE:
+                snapshot.completed++;
+                break;
+            case TaskStatus.IN_PROGRESS:
+                snapshot.pending++;
+                snapshot.inProgress++;
+                break;
+            case TaskStatus.BLOCKED:
+                snapshot.blocked++;
+                break;
+            default:
+                snapshot.pending++;
+                break;
+        }
+
+        if (!task.phaseTitle) {
+            return;
+        }
+
+        const phase = phases.get(task.phaseTitle) ?? {
+            title: task.phaseTitle,
+            total: 0,
+            completed: 0,
+            pending: 0,
+            inProgress: 0,
+            blocked: 0
+        };
+
+        phase.total++;
+
+        switch (task.status) {
+            case TaskStatus.COMPLETE:
+                phase.completed++;
+                break;
+            case TaskStatus.IN_PROGRESS:
+                phase.pending++;
+                phase.inProgress++;
+                break;
+            case TaskStatus.BLOCKED:
+                phase.blocked++;
+                break;
+            default:
+                phase.pending++;
+                break;
+        }
+
+        if (!phases.has(task.phaseTitle)) {
+            phases.set(task.phaseTitle, phase);
+        }
+    });
+
+    snapshot.phases = [...phases.values()];
+    snapshot.totalPhases = snapshot.phases.length;
+    snapshot.completedPhases = snapshot.phases.filter(phase => phase.completed === phase.total && phase.total > 0).length;
+
+    return snapshot;
 }
 
 function countByStatus(tasks: Task[], status: TaskStatus): number {
@@ -351,6 +492,34 @@ describe('FileUtils - Task Parsing Regex', () => {
             assert.strictEqual(countByStatus(tasks, TaskStatus.PENDING), 5);
             assert.strictEqual(countByStatus(tasks, TaskStatus.IN_PROGRESS), 1);
             assert.strictEqual(countByStatus(tasks, TaskStatus.BLOCKED), 1);
+        });
+
+        it('should capture phase titles and keep task totals in sync for phased plans', () => {
+            const tasks = parseTasksFromContent(loadFixture('04-multi-section-lf.md'));
+            const progress = buildProgressSnapshot(tasks);
+
+            assert.strictEqual(progress.total, 9);
+            assert.strictEqual(progress.completed, 2);
+            assert.strictEqual(progress.pending, 6);
+            assert.strictEqual(progress.blocked, 1);
+            assert.strictEqual(progress.totalPhases, 3);
+            assert.strictEqual(progress.completedPhases, 0);
+            assert.strictEqual(progress.phases[0].title, 'Phase 1 - Setup');
+            assert.strictEqual(progress.phases[0].total, 3);
+            assert.strictEqual(progress.phases[0].completed, 2);
+            assert.strictEqual(progress.phases[1].title, 'Phase 2 - Core Features');
+            assert.strictEqual(progress.phases[1].pending, 3);
+            assert.strictEqual(progress.phases[2].blocked, 1);
+        });
+
+        it('should treat flat plans as task-only progress with no explicit phases', () => {
+            const tasks = parseTasksFromContent(loadFixture('01-simple-lf.md'));
+            const progress = buildProgressSnapshot(tasks);
+
+            assert.strictEqual(progress.totalPhases, 0);
+            assert.strictEqual(progress.phases.length, 0);
+            assert.strictEqual(progress.total, 5);
+            assert.strictEqual(progress.pending, 5);
         });
 
         it('should parse 06-asterisk-markers correctly', () => {

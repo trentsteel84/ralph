@@ -3,6 +3,8 @@ import {
     TaskCompletion,
     TaskRequirements,
     RalphSettings,
+    TaskScope,
+    DEFAULT_TASK_SCOPE,
     DEFAULT_REQUIREMENTS,
     DEFAULT_SETTINGS
 } from './types';
@@ -106,8 +108,8 @@ export class TaskRunner {
             const prompt = await buildAgentPromptAsync(taskDescription, this.requirements);
 
             // Always start fresh chat session
-            const success = await startFreshChatSession();
-            if (success) {
+            const freshChatResult = await startFreshChatSession();
+            if (freshChatResult === 'started') {
                 this.log('Started fresh chat session');
             }
 
@@ -126,7 +128,7 @@ export class TaskRunner {
         }
     }
 
-    async triggerPrdGeneration(taskDescription: string): Promise<CopilotResult | null> {
+    async triggerPrdGeneration(taskDescription: string, scope: TaskScope = DEFAULT_TASK_SCOPE): Promise<CopilotResult | null> {
         const root = getWorkspaceRoot();
         if (!root) {
             vscode.window.showErrorMessage('Ralph: No workspace folder open');
@@ -136,7 +138,26 @@ export class TaskRunner {
         this.log('✨ Generating PRD.md from your description...');
 
         try {
-            const prompt = buildPrdGenerationPrompt(taskDescription, root);
+            const prompt = buildPrdGenerationPrompt(taskDescription, root, scope);
+            const freshChatResult = await startFreshChatSession();
+
+            if (freshChatResult !== 'started') {
+                const message = freshChatResult === 'cancelled'
+                    ? 'Starting a new GitHub chat was cancelled. Ralph did not reuse the previous chat session.'
+                    : 'Failed to start a new GitHub chat. Ralph did not reuse the previous chat session.';
+
+                this.log(message, true);
+
+                if (freshChatResult === 'cancelled') {
+                    vscode.window.showWarningMessage(`Ralph: ${message}`);
+                } else {
+                    vscode.window.showErrorMessage(`Ralph: ${message}`);
+                }
+
+                return null;
+            }
+
+            this.log('Started fresh chat session for PRD generation');
             const method = await openCopilotWithPrompt(prompt);
             this.log(
                 method === 'agent' ? 'Opened Copilot Agent Mode' :

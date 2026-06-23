@@ -1,0 +1,11 @@
+[
+  "typescript",
+  "@types/node",
+  "@types/vscode",
+  "@types/mocha",
+  "@types/sinon",
+  "@vscode/test-electron",
+  "glob",
+  "mocha",
+  "sinon"
+]

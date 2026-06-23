@@ -107,6 +107,7 @@ export function getClientScripts(): string {
             const btnResume = document.getElementById('btnResume');
             const btnStop = document.getElementById('btnStop');
             const taskText = document.getElementById('taskText');
+            const setupSection = document.getElementById('setupSection');
             const reqSection = document.getElementById('requirementsSection');
 
             if (header) {
@@ -121,6 +122,10 @@ export function getClientScripts(): string {
             };
             if (statusText) {
                 statusText.textContent = statusLabels[status] || status;
+            }
+
+            if (setupSection) {
+                setupSection.style.display = status === 'idle' ? 'block' : 'none';
             }
 
             if (reqSection) {
@@ -209,10 +214,12 @@ export function getClientScripts(): string {
         function generatePrd() {
             const textarea = document.getElementById('taskInput');
             const btn = document.querySelector('.generate-btn');
+            const selectedScope = document.querySelector('input[name="taskScope"]:checked');
 
             if (!textarea) return;
 
             const taskDescription = textarea.value.trim();
+            const scope = selectedScope?.value || 'medium';
 
             if (!taskDescription) {
                 textarea.style.borderColor = '#dc2626';
@@ -227,8 +234,17 @@ export function getClientScripts(): string {
 
             vscode.postMessage({
                 command: 'generatePrd',
-                taskDescription: taskDescription
+                taskDescription: taskDescription,
+                scope: scope
             });
+        }
+
+        function resetGeneratePrdButton() {
+            const btn = document.querySelector('.generate-btn');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '✨ Generate PRD & Tasks';
+            }
         }
 
         // ====================================================================
@@ -253,11 +269,14 @@ export function getClientScripts(): string {
                     btn.textContent = '⏳ Copilot is generating PRD...';
                 }
             }
+            if (msg.type === 'prdGenerateReset') {
+                resetGeneratePrdButton();
+            }
             if (msg.type === 'history') {
                 updateTimeline(msg.history);
             }
             if (msg.type === 'timing') {
-                updateTiming(msg.startTime, msg.taskHistory, msg.pendingTasks);
+                updateTiming(msg.startTime, msg.taskHistory, msg.progress);
             }
             if (msg.type === 'stats') {
                 updateStatsDisplay(msg);
@@ -268,11 +287,40 @@ export function getClientScripts(): string {
         // Stats Display
         // ====================================================================
 
+        function normalizeProgress(progress) {
+            return {
+                total: progress?.total || 0,
+                completed: progress?.completed || 0,
+                pending: progress?.pending || 0,
+                inProgress: progress?.inProgress || 0,
+                blocked: progress?.blocked || 0,
+                phases: Array.isArray(progress?.phases) ? progress.phases : [],
+                completedPhases: progress?.completedPhases || 0,
+                totalPhases: progress?.totalPhases || 0
+            };
+        }
+
+        function updateTimelineSummary(stats) {
+            const count = document.getElementById('timelineCount');
+            const phaseSummary = document.getElementById('timelinePhaseSummary');
+
+            if (count) {
+                count.textContent = stats.completed + '/' + stats.total;
+            }
+
+            if (phaseSummary) {
+                phaseSummary.textContent = stats.totalPhases > 0
+                    ? stats.completedPhases + '/' + stats.totalPhases + ' phases complete'
+                    : '';
+            }
+        }
+
         function updateStatsDisplay(stats) {
             const taskSection = document.getElementById('taskSection');
+            const progressStats = normalizeProgress(stats);
 
             // Handle all tasks completed state
-            if (stats.pending === 0 && stats.completed > 0) {
+            if (progressStats.pending === 0 && progressStats.completed > 0) {
                 if (taskSection) {
                     taskSection.className = 'task-section';
                     taskSection.innerHTML = '<div class="empty-state">' +
@@ -287,19 +335,21 @@ export function getClientScripts(): string {
                     '<div class="task-text" id="taskText">' + escapeHtml(stats.nextTask) + '</div>';
             }
 
-            currentPendingTasks = stats.pending;
-            totalTasks = stats.completed + stats.pending;
-            updatePipeline(stats.completed, stats.pending);
+            currentProgress = progressStats;
+            currentPendingTasks = progressStats.pending;
+            totalTasks = progressStats.total;
+            updateTimelineSummary(progressStats);
+            updatePipeline(progressStats.completed, progressStats.pending, progressStats.blocked);
         }
 
-        function updatePipeline(completed, pending) {
+        function updatePipeline(completed, pending, blocked) {
             const track = document.getElementById('pipelineTrack');
             const countEl = document.getElementById('pipelineCount');
             const totalEl = document.getElementById('pipelineTotal');
 
             if (!track) return;
 
-            const total = completed + pending;
+            const total = completed + pending + blocked;
             if (countEl) countEl.textContent = String(completed);
             if (totalEl) totalEl.textContent = String(total);
             track.innerHTML = '';
@@ -326,6 +376,13 @@ export function getClientScripts(): string {
                     track.appendChild(segment);
                 }
             }
+
+            for (let i = 0; i < blocked; i++) {
+                const segment = document.createElement('div');
+                segment.className = 'pipeline-segment blocked';
+                segment.style.flex = '1';
+                track.appendChild(segment);
+            }
         }
 
         // ====================================================================
@@ -338,26 +395,22 @@ export function getClientScripts(): string {
         let currentPendingTasks = 0;
         let currentTaskStartTime = null;
         let totalTasks = 0;
+        let currentProgress = normalizeProgress();
 
         function getTaskStats() {
-            const completed = currentTaskHistory ? currentTaskHistory.length : 0;
-            return {
-                completed: completed,
-                pending: currentPendingTasks,
-                total: totalTasks || completed + currentPendingTasks
-            };
+            return currentProgress;
         }
 
-        function updateTiming(startTime, taskHistory, pendingTasks) {
+        function updateTiming(startTime, taskHistory, progress) {
             const timingDisplay = document.getElementById('timingDisplay');
+            const progressStats = normalizeProgress(progress);
 
             if (startTime > 0) {
                 sessionStartTime = startTime;
                 currentTaskHistory = taskHistory || [];
-                currentPendingTasks = pendingTasks;
-
-                const completed = currentTaskHistory.length;
-                totalTasks = completed + pendingTasks;
+                currentProgress = progressStats;
+                currentPendingTasks = progressStats.pending;
+                totalTasks = progressStats.total;
 
                 if (currentTaskHistory.length > 0) {
                     const lastTask = currentTaskHistory[currentTaskHistory.length - 1];
@@ -376,12 +429,17 @@ export function getClientScripts(): string {
                 }
 
                 updateElapsedAndEta();
+                updateTimelineSummary(progressStats);
             } else {
                 if (elapsedInterval) {
                     clearInterval(elapsedInterval);
                     elapsedInterval = null;
                 }
                 if (timingDisplay) timingDisplay.classList.remove('visible');
+                currentProgress = normalizeProgress(progress);
+                currentPendingTasks = currentProgress.pending;
+                totalTasks = currentProgress.total;
+                updateTimelineSummary(currentProgress);
             }
         }
 
@@ -432,14 +490,11 @@ export function getClientScripts(): string {
             const empty = document.getElementById('timelineEmpty');
             const bars = document.getElementById('timelineBars');
             const labels = document.getElementById('timelineLabels');
-            const count = document.getElementById('timelineCount');
             const stats = getTaskStats();
 
             if (!empty || !bars || !labels) return;
 
-            if (count) {
-                count.textContent = stats.completed + '/' + stats.total;
-            }
+            updateTimelineSummary(stats);
 
             let avgDuration = 60000;
             if (history && history.length > 0) {
@@ -559,5 +614,7 @@ export function getClientScripts(): string {
             if (minutes > 0) return minutes + 'm ' + (seconds % 60) + 's';
             return seconds + 's';
         }
+
+        vscode.postMessage({ command: 'ready' });
     `;
 }
